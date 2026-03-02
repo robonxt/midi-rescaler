@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIDI Scaler</title>
+<script src="https://cdn.jsdelivr.net/npm/jzz"></script>
+<script src="https://cdn.jsdelivr.net/npm/jzz-midi-smf"></script>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 500px;
+    margin: 3rem auto;
+    padding: 1rem;
+    background: #1e1e2e;
+    color: #cdd6f4;
+  }
+  .card {
+    background: #313244;
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  label {
+    display: block;
+    margin-top: 1.2rem;
+    font-weight: bold;
+  }
+  input {
+    width: 100%;
+    padding: 0.6rem;
+    margin-top: 0.5rem;
+    box-sizing: border-box;
+    background: #45475a;
+    border: 1px solid #585b70;
+    color: #cdd6f4;
+    border-radius: 4px;
+  }
+  button {
+    margin-top: 2rem;
+    padding: 0.8rem;
+    width: 100%;
+    background: #89b4fa;
+    color: #11111b;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  button:hover {
+    background: #b4befe;
+  }
+  #status {
+    margin-top: 1rem;
+    font-size: 0.9rem;
+    text-align: center;
+    word-break: break-word;
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>MIDI Scaler</h2>
+  
+  <label for="midi-file">Original MIDI File:</label>
+  <input type="file" id="midi-file" accept=".mid,.midi">
+
+  <label for="original-bpm">Original BPM (Leave blank to auto-detect):</label>
+  <input type="number" id="original-bpm" step="0.1" placeholder="Leave empty to auto-detect BPM">
+
+  <label for="target-bpm">Target BPM (Required):</label>
+  <input type="number" id="target-bpm" step="0.1" placeholder="e.g. 190">
+
+  <button id="process-btn">Scale & Download</button>
+  <p id="status"></p>
+</div>
+
+<script>
+document.getElementById('process-btn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('midi-file');
+  const status = document.getElementById('status');
+  status.style.color = '#cdd6f4';
+  
+  if (!fileInput.files.length) {
+    status.style.color = '#f38ba8';
+    status.innerText = "Error: Please select a MIDI file.";
+    return;
+  }
+
+  const targetBpm = parseFloat(document.getElementById('target-bpm').value);
+  if (isNaN(targetBpm)) {
+    status.style.color = '#f38ba8';
+    status.innerText = "Error: Target BPM is required.";
+    return;
+  }
+
+  try {
+    const file = fileInput.files[0];
+    const arrayBuffer = await file.arrayBuffer();
+    
+    const data = new Uint8Array(arrayBuffer);
+    const smf = new JZZ.MIDI.SMF(data);
+    
+    let originalBpm = parseFloat(document.getElementById('original-bpm').value);
+    
+    // Auto-detect BPM using JZZ's native API
+    if (isNaN(originalBpm)) {
+      let detected = false;
+      for (let i = 0; i < smf.length; i++) {
+        for (let j = 0; j < smf[i].length; j++) {
+          const msg = smf[i][j];
+          if (msg.isTempo && msg.isTempo()) {
+            originalBpm = msg.getBPM();
+            detected = true;
+            break;
+          }
+        }
+        if (detected) break;
+      }
+      if (!detected) originalBpm = 120.0;
+    }
+    
+    const ratio = targetBpm / originalBpm;
+    
+    smf.forEach(track => {
+      for (let i = 0; i < track.length; i++) {
+        const msg = track[i];
+        
+        if (msg.isTempo && msg.isTempo()) {
+          // Replace with a cleanly generated tempo event for the target BPM
+          const newMsg = JZZ.MIDI.smfBPM(targetBpm);
+          newMsg.tt = Math.round(msg.tt * ratio);
+          track[i] = newMsg;
+        } else {
+          // Scale standard events
+          msg.tt = Math.round(msg.tt * ratio);
+        }
+      }
+    });
+    
+    const outData = smf.dump();
+    const outArray = new Uint8Array(outData.length);
+    for (let i = 0; i < outData.length; i++) {
+      outArray[i] = outData.charCodeAt(i);
+    }
+    
+    const blob = new Blob([outArray], { type: 'audio/midi' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name.replace(/\.mid(i)?$/i, `_${targetBpm}bpm.mid`);
+    document.body.appendChild(a);
+    a.click();
+    
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    status.style.color = '#a6e3a1';
+    status.innerText = `Success! Scaled from ${originalBpm.toFixed(2)} to ${targetBpm} BPM (Ratio: ${ratio.toFixed(4)}).`;
+    
+  } catch (error) {
+    console.error(error);
+    status.style.color = '#f38ba8';
+    status.innerText = "Error: Failed to process. Ensure it is a valid MIDI file.";
+  }
+});
+</script>
+</body>
+</html>
